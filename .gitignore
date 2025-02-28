@@ -1,0 +1,37 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment directories
+venv/
+ENV/
+env/
+
+# Build and distribution directories
+build/
+dist/
+*.egg-info/
+
+# IDE and editor settings
+.vscode/
+.idea/
+
+# Jupyter Notebook checkpoints (if you add notebooks later)
+.ipynb_checkpoints/
+
+# Data files (raw or processed data that are large or regenerated)
+data/
+
+# Model artifacts (if these files are generated during training and are large)
+model/*.pkl
+
+# Environment variable files (store sensitive credentials here)
+.env
+
+# Log files
+*.log
+
+# OS-specific files
+.DS_Store
+Thumbs.db
