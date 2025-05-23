@@ -35,3 +35,20 @@ model/*.pkl
 # OS-specific files
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+.env
+.DS_Store
+*.png
+.vscode/
+*.log
+*.sqlite3
+*.ipynb_checkpoints/
+models/
+figures/
+reports/
+restock_recommendations.csv
+synthetic_pharma_sales.csv
