@@ -21,21 +21,27 @@ if 'date' in df.columns:
     df['month'] = df['date'].dt.month
     df = df.dropna()
 
-# One-hot encode categorical variables
+
 categorical_cols = df.select_dtypes(include=['object']).columns
-encoder = OneHotEncoder(sparse_output=False, drop='first')
-encoded_features = encoder.fit_transform(df[categorical_cols])
-encoded_df = pd.DataFrame(encoded_features, columns=encoder.get_feature_names_out(categorical_cols))
-df = pd.concat([df.drop(columns=categorical_cols), encoded_df], axis=1)
+high_cardinality_cols = [col for col in categorical_cols if df[col].nunique() > max_unique_threshold]
+low_cardinality_cols = [col for col in categorical_cols if df[col].nunique() <= max_unique_threshold]
+
+print('High-cardinality columns excluded from encoding:', high_cardinality_cols)
+print('Low-cardinality columns to encode:', low_cardinality_cols)
+
+if low_cardinality_cols:
+    encoder = OneHotEncoder(sparse_output=False, drop='first')
+    encoded_features = encoder.fit_transform(df[low_cardinality_cols])
+    encoded_df = pd.DataFrame(encoded_features, columns=encoder.get_feature_names_out(low_cardinality_cols), index=df.index)
+    df = pd.concat([df.drop(columns=low_cardinality_cols), encoded_df], axis=1)
+else:
+    print('No categorical columns to encode.')
 
 target_column = 'units_sold'
 y = df[target_column]
 X = df.drop(columns=[target_column])
 
-combined = pd.concat([X, y], axis=1)
-combined = combined.dropna()
-X = combined.drop(columns=[target_column])
-y = combined[target_column]
+X = X.select_dtypes(include=[np.number])
 
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
@@ -79,7 +85,6 @@ for feat in features_to_plot:
         plt.savefig(f'figures/{feat}_vs_units_sold.png')
         plt.close()
 
-# Correlation heatmap
 plt.figure(figsize=(10,8))
 corr = df.corr()
 sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm')
