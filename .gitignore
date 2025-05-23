@@ -14,7 +14,7 @@ ENV/
 .ipynb_checkpoints/
 
 # Data and model files
-*.csv
+# *.csv
 *.pkl
 *.h5
 *.joblib
@@ -29,9 +29,9 @@ Thumbs.db
 .vscode/
 
 # Figures and output
-figures/
-reports/
-models/
+# figures/
+# reports/
+# models/
 
 # Environment and config
 .env
