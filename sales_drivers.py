@@ -9,7 +9,6 @@ import seaborn as sns
 from scipy import stats
 import os
 
-# Ensure output directories exist
 os.makedirs('figures', exist_ok=True)
 os.makedirs('reports', exist_ok=True)
 
@@ -17,42 +16,32 @@ print("=" * 80)
 print("MEDICATION SALES DRIVERS ANALYSIS")
 print("=" * 80)
 
-# Load the dataset
 df = pd.read_csv('synthetic_pharma_sales.csv')
 print(f"Dataset loaded with {df.shape[0]} rows, {df.shape[1]} columns")
 
-# Convert date column
 df['Date'] = pd.to_datetime(df['Date'])
 
-# Basic data cleaning
 df.dropna(subset=['units_sold'], inplace=True)
 print(f"After cleaning: {df.shape[0]} rows")
 
-# 1. CORRELATION ANALYSIS
 print("\n1. IDENTIFYING NUMERICAL SALES DRIVERS")
 
-# Select numerical features
 numerical_cols = df.select_dtypes(include=['int64', 'float64']).columns
 numerical_cols = [col for col in numerical_cols if col != 'units_sold']
 
-# Calculate correlations
 correlations = []
 for col in numerical_cols:
     corr = df[['units_sold', col]].corr().iloc[0, 1]
     correlations.append({'Feature': col, 'Correlation': corr})
 
-# Create correlation dataframe
 corr_df = pd.DataFrame(correlations)
 corr_df = corr_df.sort_values('Correlation', ascending=False)
 
-# Display top correlations
 print("\nTop factors correlated with medication sales:")
 print(corr_df.head(10))
 
-# Save correlation data
 corr_df.to_csv('reports/sales_correlations.csv', index=False)
 
-# Visualize
 plt.figure(figsize=(12, 8))
 sns.barplot(x='Correlation', y='Feature', data=corr_df.head(10))
 plt.title('Top Factors Correlated with Medication Sales')
@@ -61,31 +50,26 @@ plt.tight_layout()
 plt.savefig('figures/correlation_analysis.png')
 print("✅ Saved correlation analysis to figures/correlation_analysis.png")
 
-# 2. RWANDAN SEASONAL TRENDS ANALYSIS
 print("\n2. ANALYZING RWANDAN SEASONAL TRENDS")
 
 if 'Season' in df.columns:
-    # Analyze seasonal patterns
     seasonal_sales = df.groupby('Season')['units_sold'].agg(['mean', 'median', 'count', 'std']).reset_index()
     seasonal_sales = seasonal_sales.sort_values('mean', ascending=False)
     
     print("\nSales by Rwandan season:")
     print(seasonal_sales)
     
-    # Calculate seasonal impact percentage
     max_season = seasonal_sales.iloc[0]
     min_season = seasonal_sales.iloc[-1]
     impact_pct = (max_season['mean'] - min_season['mean']) / min_season['mean'] * 100
     
     print(f"\nSeasonal impact: {impact_pct:.1f}% higher sales in {max_season['Season']} vs {min_season['Season']}")
     
-    # Analyze seasonal impact by drug category
     if 'ATC_Code' in df.columns:
         print("\nSeasonal impact by drug category:")
         seasonal_by_atc = df.groupby(['Season', 'ATC_Code'])['units_sold'].mean().reset_index()
         seasonal_by_atc_pivot = seasonal_by_atc.pivot(index='ATC_Code', columns='Season', values='units_sold')
         
-        # Calculate seasonal variation for each drug category
         seasonal_by_atc_pivot['Variation'] = seasonal_by_atc_pivot.max(axis=1) / seasonal_by_atc_pivot.min(axis=1)
         seasonal_by_atc_pivot['Peak_Season'] = seasonal_by_atc_pivot.idxmax(axis=1)
         top_seasonal_categories = seasonal_by_atc_pivot.sort_values('Variation', ascending=False)
@@ -93,7 +77,6 @@ if 'Season' in df.columns:
         print("Top drug categories by seasonal variation:")
         print(top_seasonal_categories[['Variation', 'Peak_Season']].head(5))
         
-        # Visualization for seasonal trends
         plt.figure(figsize=(12, 8))
         sns.lineplot(data=seasonal_by_atc, x='Season', y='units_sold', hue='ATC_Code', marker='o')
         plt.title('Medication Sales by Season and Drug Category')
@@ -103,21 +86,17 @@ if 'Season' in df.columns:
         plt.savefig('figures/seasonal_trends.png')
         print("✅ Saved seasonal trends visualization")
 
-# 3. EPIDEMIC/DISEASE OUTBREAK ANALYSIS
 print("\n3. ANALYZING DISEASE OUTBREAK IMPACT")
 
 if 'Disease_Outbreak' in df.columns:
-    # Convert to categorical for better analysis
     df['Outbreak_Level'] = pd.cut(df['Disease_Outbreak'], 
                                   bins=[0, 0.5, 1.0, 1.5, 2.0], 
                                   labels=['None', 'Low', 'Medium', 'High'])
     
-    # Analyze overall impact
     outbreak_impact = df.groupby('Outbreak_Level')['units_sold'].agg(['mean', 'count']).reset_index()
     print("\nImpact of disease outbreaks on medication sales:")
     print(outbreak_impact)
     
-    # Calculate percentage increase during outbreaks
     if 'None' in outbreak_impact['Outbreak_Level'].values and 'High' in outbreak_impact['Outbreak_Level'].values:
         no_outbreak = outbreak_impact.loc[outbreak_impact['Outbreak_Level'] == 'None', 'mean'].values[0]
         high_outbreak = outbreak_impact.loc[outbreak_impact['Outbreak_Level'] == 'High', 'mean'].values[0]
