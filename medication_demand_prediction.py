@@ -1,5 +1,5 @@
 import pandas as pd
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -10,37 +10,94 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 df = pd.read_csv('synthetic_pharma_sales.csv')
-df.dropna(inplace=True)
+print(f"Loaded dataset with {df.shape[0]} rows and {df.shape[1]} columns")
 
-if 'date' in df.columns:
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date')
+df.dropna(how='all', inplace=True)
+
+# Check for Date column (capital D) since that's what the CSV has
+if 'Date' in df.columns:
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values('Date')
     df['lag_1_units_sold'] = df['units_sold'].shift(1)
     df['rolling_mean_3'] = df['units_sold'].rolling(window=3).mean()
     df['rolling_std_3'] = df['units_sold'].rolling(window=3).std()
-    df['month'] = df['date'].dt.month
-    df = df.dropna()
+    df['month'] = df['Date'].dt.month
+    # Drop rows with NaN values only in the new engineered features
+    df = df.dropna(subset=['lag_1_units_sold', 'rolling_mean_3', 'rolling_std_3'])
 
-# One-hot encode categorical variables
+# Ensure units_sold is numeric
+df['units_sold'] = pd.to_numeric(df['units_sold'], errors='coerce')
+
+# Identify categorical columns but exclude the target column
 categorical_cols = df.select_dtypes(include=['object']).columns
-encoder = OneHotEncoder(sparse_output=False, drop='first')
-encoded_features = encoder.fit_transform(df[categorical_cols])
-encoded_df = pd.DataFrame(encoded_features, columns=encoder.get_feature_names_out(categorical_cols))
-df = pd.concat([df.drop(columns=categorical_cols), encoded_df], axis=1)
+categorical_cols = [col for col in categorical_cols if col != 'units_sold']
+
+if len(categorical_cols) > 0:
+    print(f"Dropping categorical columns: {list(categorical_cols)}")
+    df = df.drop(columns=categorical_cols)
+
+# Remove any remaining rows with NaN in target column
+df = df.dropna(subset=['units_sold'])
+
+# Drop columns that are mostly empty (like Unnamed columns)
+columns_to_drop = []
+for col in df.columns:
+    if col.startswith('Unnamed') or df[col].isnull().sum() > len(df) * 0.5:
+        columns_to_drop.append(col)
+
+if columns_to_drop:
+    print(f"Dropping mostly empty columns: {columns_to_drop}")
+    df = df.drop(columns=columns_to_drop)
+
+print(f"After preprocessing: {df.shape[0]} rows and {df.shape[1]} columns")
 
 target_column = 'units_sold'
+if target_column not in df.columns:
+    raise ValueError(f"Target column '{target_column}' not found in data!")
+
+# Convert Date to numeric features or drop it since we already have month
+if 'Date' in df.columns:
+    # Convert Date to day of year which can be useful for seasonality
+    df['day_of_year'] = df['Date'].dt.dayofyear
+    # Drop the original Date column as it can't be scaled
+    df = df.drop(columns=['Date'])
+
 y = df[target_column]
 X = df.drop(columns=[target_column])
 
+print(f"Features shape: {X.shape}")
+print(f"Target shape: {y.shape}")
+print(f"Features with missing values:")
+for col in X.columns:
+    missing_count = X[col].isnull().sum()
+    if missing_count > 0:
+        print(f"  {col}: {missing_count} missing values")
+
+# Handle remaining missing values by filling with median for numeric columns
+numeric_cols = X.select_dtypes(include=[np.number]).columns
+for col in numeric_cols:
+    if X[col].isnull().sum() > 0:
+        X[col] = X[col].fillna(X[col].median())
+
+# Remove any remaining NaN values if they still exist
 combined = pd.concat([X, y], axis=1)
+rows_before = combined.shape[0]
 combined = combined.dropna()
+rows_after = combined.shape[0]
+print(f"Dropped {rows_before - rows_after} rows with remaining NaN values")
+
 X = combined.drop(columns=[target_column])
 y = combined[target_column]
+
+print(f"Final dataset shape - Features: {X.shape}, Target: {y.shape}")
+
+if X.shape[0] == 0:
+    raise ValueError("No samples remaining after preprocessing! Check your data for missing values.")
 
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.4, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
 models = {
     "Linear Regression": LinearRegression(),
@@ -79,7 +136,6 @@ for feat in features_to_plot:
         plt.savefig(f'figures/{feat}_vs_units_sold.png')
         plt.close()
 
-# Correlation heatmap
 plt.figure(figsize=(10,8))
 corr = df.corr()
 sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm')

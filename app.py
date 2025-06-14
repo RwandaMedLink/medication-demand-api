@@ -6,13 +6,11 @@ def main():
     print("2. Advanced Demand Prediction")
     print("3. Optimized Model")
     print("4. Quick Analysis")
-    print("5. Restock Generator")
-    print("6. Restock Recommendation System")
     print("7. Rwanda Demand Factors Analysis")
     print("8. Rwanda Demand Prediction")
     print("9. Rwanda Sales Drivers Analysis")
     print("10. Seasonal Analysis")
-    print("11. Simple Restock Calculator")
+
 
     choice = input("Enter the number of the tool you want to run: ")
 
@@ -21,13 +19,10 @@ def main():
         "2": "advanced_demand_prediction.py",
         "3": "optimized_model.py",
         "4": "quick_analysis.py",
-        "5": "restock_generator.py",
-        "6": "restock_recommendation_system.py",
         "7": "rwanda_demand_factors.py",
         "8": "rwanda_demand_prediction.py",
         "9": "rwanda_sales_drivers.py",
         "10": "seasonal_analysis.py",
-        "11": "simple_restock.py",
     }
 
     if choice in tools:

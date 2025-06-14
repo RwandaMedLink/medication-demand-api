@@ -2,11 +2,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder, OrdinalEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import os
 import joblib
@@ -16,8 +18,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class MedicationDemandPredictor:
-    def __init__(self, data_path):
+    def __init__(self, data_path, categorical_encoding='label'):
         self.data_path = data_path
+        self.categorical_encoding = categorical_encoding  # 'onehot', 'label', 'ordinal', 'target'
         self.df = None
         self.X_train = None
         self.X_test = None
@@ -30,8 +33,8 @@ class MedicationDemandPredictor:
         self.categorical_cols = None
         self.numerical_cols = None
         self.trained_pipeline = None
-        
-        # Create directories for output
+        self.label_encoders = {}  # Store label encoders for inverse transform
+
         os.makedirs('models', exist_ok=True)
         os.makedirs('figures', exist_ok=True)
         
@@ -41,7 +44,13 @@ class MedicationDemandPredictor:
         self.df = pd.read_csv(self.data_path)
         print(f"Dataset loaded with {self.df.shape[0]} rows and {self.df.shape[1]} columns")
         
-        # Convert date columns to datetime
+        # Display column names and missing values for debugging
+        print("\nColumn information:")
+        print(self.df.info())
+        print("\nMissing values per column:")
+        print(self.df.isnull().sum())
+        
+        # Convert date columns
         date_cols = ['Date', 'sale_timestamp', 'stock_entry_timestamp', 'expiration_date']
         for col in date_cols:
             if col in self.df.columns:
@@ -50,11 +59,39 @@ class MedicationDemandPredictor:
                 except Exception as e:
                     print(f"Warning: Could not convert {col} to datetime: {str(e)}")
         
-        # Drop any rows with missing values
+        # Handle missing values more carefully
         initial_count = len(self.df)
-        self.df.dropna(inplace=True)
-        if len(self.df) < initial_count:
-            print(f"Dropped {initial_count - len(self.df)} rows with missing values")
+        
+        # Check if target column exists and has values
+        if 'units_sold' not in self.df.columns:
+            print("Error: Target column 'units_sold' not found in dataset")
+            print("Available columns:", list(self.df.columns))
+            return self
+        
+        # Only drop rows where target is missing
+        self.df = self.df.dropna(subset=['units_sold'])
+        print(f"Dropped {initial_count - len(self.df)} rows with missing target values")
+        
+        # Fill missing values in other columns
+        for col in self.df.columns:
+            if col != 'units_sold' and self.df[col].isnull().any():
+                if self.df[col].dtype in ['object', 'string']:
+                    # Fill categorical columns with 'Unknown'
+                    self.df[col].fillna('Unknown', inplace=True)
+                else:
+                    # Fill numerical columns with median or 0
+                    if self.df[col].dtype in ['int64', 'float64']:
+                        median_val = self.df[col].median()
+                        if pd.isna(median_val):
+                            self.df[col].fillna(0, inplace=True)
+                        else:
+                            self.df[col].fillna(median_val, inplace=True)
+        
+        print(f"Final dataset shape: {self.df.shape}")
+        
+        # Ensure we have enough data for training
+        if len(self.df) < 10:
+            print(f"Warning: Only {len(self.df)} samples remaining. This may not be enough for training.")
         
         return self
     
@@ -62,7 +99,12 @@ class MedicationDemandPredictor:
         """Create additional features from the dataset."""
         print("Engineering features...")
         
-        # Extract date features
+        # Check if we have data to work with
+        if len(self.df) == 0:
+            print("No data available for feature engineering")
+            return self
+        
+        # Time-based features
         if 'Date' in self.df.columns:
             self.df['Year'] = self.df['Date'].dt.year
             self.df['Month'] = self.df['Date'].dt.month
@@ -71,12 +113,11 @@ class MedicationDemandPredictor:
             self.df['IsWeekend'] = self.df['DayOfWeek'].apply(lambda x: 1 if x >= 5 else 0)
             self.df['Quarter'] = self.df['Date'].dt.quarter
             self.df['DayOfYear'] = self.df['Date'].dt.dayofyear
-            
-            # Create lag features for time series aspects
-            # Group by relevant identifiers
-            if all(col in self.df.columns for col in ['Drug_ID', 'Health_Center']):
-                # Group by Drug and Health Center
-                group_cols = ['Drug_ID', 'Health_Center']
+    
+            # Lag features - only if we have enough data
+            if len(self.df) > 7 and all(col in self.df.columns for col in ['Drug_ID', 'Pharmacy_Name']):
+                # Group by Drug and Pharmacy
+                group_cols = ['Drug_ID', 'Pharmacy_Name']
                 
                 # Sort by date within each group
                 self.df = self.df.sort_values(group_cols + ['Date'])
@@ -95,44 +136,77 @@ class MedicationDemandPredictor:
                     if col in self.df.columns:
                         self.df[col].fillna(0, inplace=True)
         
-        # Calculate stock duration
+        # Calculate stock duration (only if columns exist)
         if 'expiration_date' in self.df.columns and 'Date' in self.df.columns:
-            self.df['Days_Until_Expiry'] = (self.df['expiration_date'] - self.df['Date']).dt.days
+            try:
+                self.df['Days_Until_Expiry'] = (self.df['expiration_date'] - self.df['Date']).dt.days
+                # Fill negative or missing values
+                self.df['Days_Until_Expiry'].fillna(0, inplace=True)
+                self.df['Days_Until_Expiry'] = self.df['Days_Until_Expiry'].clip(lower=0)
+            except Exception as e:
+                print(f"Warning: Could not calculate Days_Until_Expiry: {str(e)}")
         
-        # Calculate days since stock entry
+        # Calculate days since stock entry (only if columns exist)
         if 'stock_entry_timestamp' in self.df.columns and 'Date' in self.df.columns:
-            self.df['Days_Since_Stock_Entry'] = (self.df['Date'] - self.df['stock_entry_timestamp']).dt.days
+            try:
+                self.df['Days_Since_Stock_Entry'] = (self.df['Date'] - self.df['stock_entry_timestamp']).dt.days
+                # Fill negative or missing values
+                self.df['Days_Since_Stock_Entry'].fillna(0, inplace=True)
+                self.df['Days_Since_Stock_Entry'] = self.df['Days_Since_Stock_Entry'].clip(lower=0)
+            except Exception as e:
+                print(f"Warning: Could not calculate Days_Since_Stock_Entry: {str(e)}")
         
-        # Create inventory turnover ratio
+        # Create inventory turnover ratio (only if columns exist)
         if 'units_sold' in self.df.columns and 'available_stock' in self.df.columns:
-            self.df['Inventory_Turnover'] = self.df['units_sold'] / (self.df['available_stock'] + 1)  # Add 1 to avoid division by zero
+            try:
+                self.df['Inventory_Turnover'] = self.df['units_sold'] / (self.df['available_stock'] + 1)  # Add 1 to avoid division by zero
+                # Fill any inf or nan values
+                self.df['Inventory_Turnover'].replace([np.inf, -np.inf], 0, inplace=True)
+                self.df['Inventory_Turnover'].fillna(0, inplace=True)
+            except Exception as e:
+                print(f"Warning: Could not calculate Inventory_Turnover: {str(e)}")
         
-        # Create drug-specific features
-        if all(col in self.df.columns for col in ['Drug_ID', 'Health_Center']):
-            # Average sales per drug
-            drug_avg_sales = self.df.groupby('Drug_ID')['units_sold'].mean().reset_index()
-            drug_avg_sales.columns = ['Drug_ID', 'Avg_Drug_Sales']
-            self.df = pd.merge(self.df, drug_avg_sales, on='Drug_ID', how='left')
-            
-            # Average sales per health center
-            center_avg_sales = self.df.groupby('Health_Center')['units_sold'].mean().reset_index()
-            center_avg_sales.columns = ['Health_Center', 'Avg_Center_Sales']
-            self.df = pd.merge(self.df, center_avg_sales, on='Health_Center', how='left')
+        # Create drug-specific features (only if enough data and columns exist)
+        if len(self.df) > 1 and all(col in self.df.columns for col in ['Drug_ID', 'Pharmacy_Name']):
+            try:
+                # Average sales per drug
+                drug_avg_sales = self.df.groupby('Drug_ID')['units_sold'].mean().reset_index()
+                drug_avg_sales.columns = ['Drug_ID', 'Avg_Drug_Sales']
+                self.df = pd.merge(self.df, drug_avg_sales, on='Drug_ID', how='left')
+                
+                # Average sales per pharmacy
+                pharmacy_avg_sales = self.df.groupby('Pharmacy_Name')['units_sold'].mean().reset_index()
+                pharmacy_avg_sales.columns = ['Pharmacy_Name', 'Avg_Pharmacy_Sales']
+                self.df = pd.merge(self.df, pharmacy_avg_sales, on='Pharmacy_Name', how='left')
+            except Exception as e:
+                print(f"Warning: Could not create drug/pharmacy averages: {str(e)}")
         
-        # Interaction features
+        # Interaction features (only if columns exist)
         if 'Promotion' in self.df.columns and 'Holiday_Week' in self.df.columns:
-            self.df['Promotion_Holiday'] = self.df['Promotion'] * self.df['Holiday_Week']
+            try:
+                self.df['Promotion_Holiday'] = self.df['Promotion'] * self.df['Holiday_Week']
+            except Exception as e:
+                print(f"Warning: Could not create Promotion_Holiday: {str(e)}")
         
         if 'Disease_Outbreak' in self.df.columns and 'Effectiveness_Rating' in self.df.columns:
-            self.df['Outbreak_Effectiveness'] = self.df['Disease_Outbreak'] * self.df['Effectiveness_Rating']
+            try:
+                self.df['Outbreak_Effectiveness'] = self.df['Disease_Outbreak'] * self.df['Effectiveness_Rating']
+            except Exception as e:
+                print(f"Warning: Could not create Outbreak_Effectiveness: {str(e)}")
         
-        # Price-based features
+        # Price-based features (only if columns exist)
         if 'Price_Per_Unit' in self.df.columns and 'Drug_ID' in self.df.columns:
-            # Calculate price position relative to drug average
-            drug_avg_price = self.df.groupby('Drug_ID')['Price_Per_Unit'].mean().reset_index()
-            drug_avg_price.columns = ['Drug_ID', 'Avg_Drug_Price']
-            self.df = pd.merge(self.df, drug_avg_price, on='Drug_ID', how='left')
-            self.df['Price_Position'] = self.df['Price_Per_Unit'] / self.df['Avg_Drug_Price']
+            try:
+                # Calculate price position relative to drug average
+                drug_avg_price = self.df.groupby('Drug_ID')['Price_Per_Unit'].mean().reset_index()
+                drug_avg_price.columns = ['Drug_ID', 'Avg_Drug_Price']
+                self.df = pd.merge(self.df, drug_avg_price, on='Drug_ID', how='left')
+                self.df['Price_Position'] = self.df['Price_Per_Unit'] / (self.df['Avg_Drug_Price'] + 0.01)  # Add small value to avoid division by zero
+                # Fill any inf or nan values
+                self.df['Price_Position'].replace([np.inf, -np.inf], 1, inplace=True)
+                self.df['Price_Position'].fillna(1, inplace=True)
+            except Exception as e:
+                print(f"Warning: Could not create Price_Position: {str(e)}")
         
         print(f"Created {self.df.shape[1]} total features")
         return self
@@ -141,15 +215,30 @@ class MedicationDemandPredictor:
         """Prepare data for modeling by splitting features and target."""
         print("Preparing data for modeling...")
         
+        # Check if we have data
+        if len(self.df) == 0:
+            print("Error: No data available for modeling")
+            return self
+        
         # Define target
         target_column = 'units_sold'
+        if target_column not in self.df.columns:
+            print(f"Error: Target column '{target_column}' not found")
+            return self
+        
         y = self.df[target_column]
         
         # Drop unnecessary columns
         date_cols = [col for col in self.df.columns 
                     if 'date' in col.lower() or 'timestamp' in col.lower()]
         drop_cols = [target_column] + date_cols
+        
+        # Only drop columns that actually exist
+        drop_cols = [col for col in drop_cols if col in self.df.columns]
         X = self.df.drop(columns=drop_cols)
+        
+        # Handle any remaining missing values
+        X = X.fillna(0)
         
         # Identify categorical and numerical columns
         self.categorical_cols = X.select_dtypes(include=['object']).columns.tolist()
@@ -159,9 +248,17 @@ class MedicationDemandPredictor:
         print(f"Categorical features: {len(self.categorical_cols)}")
         print(f"Numerical features: {len(self.numerical_cols)}")
         
-        # Split the data
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42)
+        # Check if we have enough samples for train/test split
+        if len(X) < 5:
+            print(f"Warning: Only {len(X)} samples available. Using all data for training.")
+            self.X_train = X
+            self.X_test = X.iloc[:1]  # Use first row as test
+            self.y_train = y
+            self.y_test = y.iloc[:1]
+        else:
+            # Split the data
+            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42)
         
         print(f"Training set: {self.X_train.shape[0]} samples")
         print(f"Test set: {self.X_test.shape[0]} samples")
@@ -170,24 +267,108 @@ class MedicationDemandPredictor:
     
     def build_models(self):
         """Build several model pipelines for comparison."""
-        print("Building model pipelines...")
+        print(f"Building model pipelines with {self.categorical_encoding} encoding...")
         
-        # Create preprocessing pipeline
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ('num', StandardScaler(), self.numerical_cols),
-                ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), self.categorical_cols)
-            ])
+        # Create different categorical encoders based on selection
+        if self.categorical_encoding == 'onehot':
+            cat_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+        elif self.categorical_encoding == 'label':
+            cat_encoder = 'passthrough'  # We'll handle label encoding separately
+        elif self.categorical_encoding == 'ordinal':
+            cat_encoder = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
+        elif self.categorical_encoding == 'target':
+            cat_encoder = 'passthrough'  # We'll handle target encoding separately
+        else:
+            raise ValueError(f"Unsupported encoding method: {self.categorical_encoding}")
         
-        # Create multiple models with their preprocessing pipeline
+        # Handle label encoding and target encoding separately
+        if self.categorical_encoding == 'label':
+            # Apply label encoding to categorical columns
+            X_train_encoded = self.X_train.copy()
+            X_test_encoded = self.X_test.copy()
+            
+            for col in self.categorical_cols:
+                le = LabelEncoder()
+                # Fit on training data and transform both train and test
+                X_train_encoded[col] = le.fit_transform(X_train_encoded[col].astype(str))
+                # Handle unknown categories in test set
+                X_test_encoded[col] = X_test_encoded[col].astype(str)
+                unknown_mask = ~X_test_encoded[col].isin(le.classes_)
+                X_test_encoded[col] = X_test_encoded[col].map(lambda x: x if x in le.classes_ else le.classes_[0])
+                X_test_encoded[col] = le.transform(X_test_encoded[col])
+                self.label_encoders[col] = le
+            
+            # Update the datasets
+            self.X_train = X_train_encoded
+            self.X_test = X_test_encoded
+            
+            # Create preprocessing pipeline (only numerical scaling needed)
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ('num', StandardScaler(), self.numerical_cols)
+                ],
+                remainder='passthrough'  # Keep categorical columns as-is since they're already encoded
+            )
+            
+        elif self.categorical_encoding == 'target':
+            # Apply target encoding (mean encoding)
+            X_train_encoded = self.X_train.copy()
+            X_test_encoded = self.X_test.copy()
+            
+            for col in self.categorical_cols:
+                # Calculate mean target value for each category
+                target_means = self.X_train.groupby(col)[self.y_train.name].mean() if hasattr(self.y_train, 'name') else \
+                              pd.concat([self.X_train[col], self.y_train], axis=1).groupby(col)[self.y_train.index.name or 0].mean()
+                
+                # Apply encoding
+                X_train_encoded[col] = X_train_encoded[col].map(target_means)
+                X_test_encoded[col] = X_test_encoded[col].map(target_means)
+                
+                # Fill unknown categories with global mean
+                global_mean = self.y_train.mean()
+                X_train_encoded[col].fillna(global_mean, inplace=True)
+                X_test_encoded[col].fillna(global_mean, inplace=True)
+                
+                self.label_encoders[col] = target_means
+            
+            # Update the datasets
+            self.X_train = X_train_encoded
+            self.X_test = X_test_encoded
+            
+            # All columns are now numerical, so treat them all as numerical
+            all_numerical_cols = self.numerical_cols + self.categorical_cols
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ('num', StandardScaler(), all_numerical_cols)
+                ]
+            )
+            
+        else:
+            # For ordinal and onehot encoding, use the standard pipeline
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ('num', StandardScaler(), self.numerical_cols),
+                    ('cat', cat_encoder, self.categorical_cols)
+                ]
+            )
+        
+        # Create multiple models with their preprocessing pipeline - prioritize Linear Regression
         self.models = {
             'Linear Regression': Pipeline([
                 ('preprocessor', preprocessor),
                 ('regressor', LinearRegression())
+            ]),
+            'Random Forest': Pipeline([
+                ('preprocessor', preprocessor),
+                ('regressor', RandomForestRegressor(n_estimators=100, random_state=42))
+            ]),
+            'Support Vector Machine': Pipeline([
+                ('preprocessor', preprocessor),
+                ('regressor', SVR())
             ])
         }
         
-        print(f"Created {len(self.models)} model pipelines")
+        print(f"Created {len(self.models)} model pipelines with {self.categorical_encoding} encoding")
         return self
     
     def train_and_evaluate(self, cv=5):
@@ -243,6 +424,9 @@ class MedicationDemandPredictor:
             print(f"  CV R² (std): {cv_scores.std():.4f}")
             print(f"  Training time: {training_time:.2f} seconds")
             
+            # Save the model immediately after training
+            self.save_individual_model(name, model, r2)
+            
             # Check if this is the best model so far
             if r2 > best_score:
                 best_score = r2
@@ -262,6 +446,16 @@ class MedicationDemandPredictor:
         # Define hyperparameter grids for different models
         param_grids = {
             'Linear Regression': {},  # No hyperparameters to tune
+            'Random Forest': {
+                'regressor__n_estimators': [50, 100, 200],
+                'regressor__max_depth': [None, 10, 20],
+                'regressor__min_samples_split': [2, 5, 10]
+            },
+            'Support Vector Machine': {
+                'regressor__C': [0.1, 1, 10, 100],
+                'regressor__gamma': ['scale', 'auto', 0.001, 0.01],
+                'regressor__kernel': ['rbf', 'linear']
+            }
         }
         
         # Get the parameter grid for the best model
@@ -338,24 +532,32 @@ class MedicationDemandPredictor:
         
         # Try to get feature names after preprocessing
         try:
-            preprocessor = model.named_steps['preprocessor']
-            feature_names = []
-            
-            # Get numerical feature names
-            if self.numerical_cols:
-                feature_names.extend(self.numerical_cols)
-            
-            # Get one-hot encoded feature names
-            if self.categorical_cols:
-                encoder = preprocessor.transformers_[1][1]
-                cat_feature_names = encoder.get_feature_names_out(self.categorical_cols)
-                feature_names.extend(cat_feature_names)
+            if self.categorical_encoding in ['label', 'target']:
+                # For label and target encoding, feature names are the same as original
+                feature_names = self.numerical_cols + self.categorical_cols
+            else:
+                # For onehot and ordinal encoding
+                preprocessor = model.named_steps['preprocessor']
+                feature_names = []
+                
+                # Get numerical feature names
+                if self.numerical_cols:
+                    feature_names.extend(self.numerical_cols)
+                
+                # Get categorical feature names
+                if self.categorical_cols:
+                    if self.categorical_encoding == 'onehot':
+                        encoder = preprocessor.transformers_[1][1]
+                        cat_feature_names = encoder.get_feature_names_out(self.categorical_cols)
+                        feature_names.extend(cat_feature_names)
+                    elif self.categorical_encoding == 'ordinal':
+                        feature_names.extend(self.categorical_cols)
         except Exception as e:
             print(f"Warning: Could not get feature names: {str(e)}")
             feature_names = [f"Feature_{i}" for i in range(1000)]  # Create dummy feature names
         
         # Extract feature importances for tree-based models
-        if model_name in ['Random Forest', 'Gradient Boosting']:
+        if model_name in ['Random Forest']:
             try:
                 regressor = model.named_steps['regressor']
                 importances = regressor.feature_importances_
@@ -510,6 +712,18 @@ class MedicationDemandPredictor:
         print(f"Best model ({self.best_model}) saved to {path}")
         return self
     
+    def save_individual_model(self, model_name, model, r2_score):
+        """Save an individual model immediately after training."""
+        # Create a clean filename from the model name
+        filename = f"{model_name.replace(' ', '_').lower()}_{self.categorical_encoding}_r2_{r2_score:.4f}.pkl"
+        path = os.path.join('models', filename)
+        
+        # Save the model
+        joblib.dump(model, path)
+        
+        print(f"  → Model saved to {path}")
+        return self
+    
     def generate_restock_recommendations(self, days_to_predict=30):
         """Generate restock recommendations based on predicted demand."""
         print("\nGenerating restock recommendations...")
@@ -531,7 +745,7 @@ class MedicationDemandPredictor:
         # For each product and location combination
         for _, row in latest_data.iterrows():
             drug = row['Drug_ID']
-            center = row['Health_Center']
+            center = row['Pharmacy_Name']
             province = row['Province'] if 'Province' in row else None
             
             # For each future date
@@ -556,7 +770,7 @@ class MedicationDemandPredictor:
                     future_row['Days_Until_Expiry'] = (future_row['expiration_date'] - future_date).days
                 
                 if 'Days_Since_Stock_Entry' in future_row and 'stock_entry_timestamp' in future_row:
-                    future_row['Days_Since_Stock_Entry'] = (future_date - future_row['stock_entry_timestamp']).days
+                    future_row['Days_Since_Stock_Entry'] = (future_date - future_row['stock_entry_timestamp']).dt.days
                 
                 # Convert to DataFrame for prediction
                 future_df = pd.DataFrame([future_row])
@@ -566,6 +780,27 @@ class MedicationDemandPredictor:
                             if 'date' in col.lower() or 'timestamp' in col.lower()]
                 drop_cols = ['units_sold'] + date_cols
                 future_X = future_df.drop(columns=drop_cols, errors='ignore')
+                
+                # Apply the same categorical encoding used during training
+                if self.categorical_encoding == 'label':
+                    for col in self.categorical_cols:
+                        if col in future_X.columns and col in self.label_encoders:
+                            le = self.label_encoders[col]
+                            value = future_X[col].iloc[0]
+                            if value in le.classes_:
+                                future_X[col] = le.transform([str(value)])[0]
+                            else:
+                                future_X[col] = le.transform([le.classes_[0]])[0]  # Use first class for unknown values
+                
+                elif self.categorical_encoding == 'target':
+                    for col in self.categorical_cols:
+                        if col in future_X.columns and col in self.label_encoders:
+                            target_means = self.label_encoders[col]
+                            value = future_X[col].iloc[0]
+                            if value in target_means:
+                                future_X[col] = target_means[value]
+                            else:
+                                future_X[col] = target_means.mean()  # Use global mean for unknown values
                 
                 # Make sure columns match training data
                 for col in self.X_train.columns:
@@ -581,7 +816,7 @@ class MedicationDemandPredictor:
                 prediction_entry = {
                     'Date': future_date,
                     'Drug_ID': drug,
-                    'Health_Center': center,
+                    'Pharmacy_Name': center,
                     'Predicted_Units': max(0, round(pred_units))
                 }
                 
@@ -593,8 +828,8 @@ class MedicationDemandPredictor:
         # Convert to DataFrame
         predictions_df = pd.DataFrame(predictions)
         
-        # Aggregate by Drug and Health Center
-        group_cols = ['Drug_ID', 'Health_Center']
+        # Aggregate by Drug and Pharmacy
+        group_cols = ['Drug_ID', 'Pharmacy_Name']
         if 'Province' in predictions_df.columns:
             group_cols.append('Province')
         
@@ -644,6 +879,7 @@ class MedicationDemandPredictor:
 
     def run_full_pipeline(self):
         """Run the complete modeling pipeline."""
+        print(f"Starting medication demand prediction pipeline with {self.categorical_encoding} encoding...")
         (self.load_data()
              .engineer_features()
              .prepare_data()
@@ -663,8 +899,16 @@ class MedicationDemandPredictor:
 
 if __name__ == "__main__":
     try:
+        # You can now specify different encoding methods:
+        # 'onehot' - One-hot encoding (default)
+        # 'label' - Label encoding
+        # 'ordinal' - Ordinal encoding
+        # 'target' - Target/mean encoding
+        
+        encoding_method = 'label'  # Change this to test different encodings
+        
         # Initialize and run the pipeline
-        predictor = MedicationDemandPredictor('synthetic_pharma_sales.csv')
+        predictor = MedicationDemandPredictor('synthetic_pharma_sales.csv', categorical_encoding=encoding_method)
         predictor.run_full_pipeline()
     except Exception as e:
         print(f"Error: {str(e)}")
