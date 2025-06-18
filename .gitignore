@@ -1,37 +1,41 @@
-# Python bytecode and cache
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*$py.class
+*.so
+*.pyd
+*.pyo
 
-# Virtual environment directories
+# Virtual environment
+.venv/
 venv/
 ENV/
-env/
 
-# Build and distribution directories
-build/
-dist/
-*.egg-info/
-
-# IDE and editor settings
-.vscode/
-.idea/
-
-# Jupyter Notebook checkpoints (if you add notebooks later)
+# Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-# Data files (raw or processed data that are large or regenerated)
-data/
+# Data and model files
+# *.csv
+*.pkl
+*.h5
+*.joblib
+*.npy
+*.npz
 
-# Model artifacts (if these files are generated during training and are large)
-model/*.pkl
-
-# Environment variable files (store sensitive credentials here)
-.env
-
-# Log files
-*.log
-
-# OS-specific files
+# OS files
 .DS_Store
 Thumbs.db
+
+# VSCode settings
+.vscode/
+
+# Figures and output
+# figures/
+# reports/
+# models/
+
+# Environment and config
+.env
+*.env
+
+# Misc
+*.log
