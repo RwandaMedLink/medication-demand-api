@@ -15,7 +15,7 @@ ENV/
 
 # Data and model files
 # *.csv
-*.pkl
+# *.pkl
 *.h5
 *.joblib
 *.npy
