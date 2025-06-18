@@ -26,7 +26,7 @@ class Config:
     
     # Model settings
     MODEL_DIR = BASE_DIR / 'models'
-    DEFAULT_MODEL_PATH = MODEL_DIR / 'linear_regression_label_r2_0.9986.pkl'
+    DEFAULT_MODEL_PATH = MODEL_DIR / 'pharmacy_linear_regression_label_r2_0.9985_20250618_1040.pkl'
     ENCODERS_PATH = MODEL_DIR / 'label_encoders.pkl'
     
     # Feature engineering settings

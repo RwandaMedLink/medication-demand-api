@@ -1,10 +1,14 @@
 """
-Services module
-===============
+Services Package for Rwanda Pharmacy Prediction System
+====================================================
 
-This module contains service classes for the Rwanda MedLink API.
+This package contains business logic services for:
+- Model loading and prediction
+- Feature engineering and validation
+- Business intelligence generation
+- Rwanda-specific pharmacy analytics
 """
 
-from services.model_service import ModelService
+from .model_service import ModelService
 
 __all__ = ['ModelService']

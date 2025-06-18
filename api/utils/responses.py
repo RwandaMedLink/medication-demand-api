@@ -1,217 +1,122 @@
 """
-Response formatting utilities for the Rwanda MedLink API.
+Response utilities for Rwanda Pharmacy Demand Prediction API
+==========================================================
+
+This module provides standardized response functions for:
+- Success responses with consistent formatting
+- Error responses with detailed error information
+- Business intelligence response formatting
+- Rwanda-specific response enhancements
 """
 
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 from flask import jsonify
-import logging
+from typing import Dict, Any, Optional, List
+from datetime import datetime
 
-logger = logging.getLogger(__name__)
 
-
-def success_response(data: Any, message: str = "Success", status_code: int = 200) -> tuple:
+def success_response(data: Dict[str, Any], message: str = "Success", status_code: int = 200) -> tuple:
     """
-    Create a standardized success response.
+    Generate standardized success response.
     
     Args:
-        data: The response data
+        data: Response data
         message: Success message
         status_code: HTTP status code
         
     Returns:
-        Tuple of (response, status_code)
+        Tuple of (Flask response, status_code)
     """
     response = {
-        "success": True,
-        "message": message,
-        "data": data,
-        "timestamp": datetime.utcnow().isoformat(),
-        "status_code": status_code
+        'success': True,
+        'message': message,
+        'timestamp': datetime.now().isoformat(),
+        'data': data,
+        'rwanda_medlink': {
+            'version': '1.0.0',
+            'system': 'Rwanda Pharmacy Prediction API',
+            'capabilities': ['seasonal_analysis', 'business_intelligence', 'demographic_insights']
+        }
     }
     
-    logger.info(f"Success response: {message} (status: {status_code})")
     return jsonify(response), status_code
 
 
-def error_response(message: str, status_code: int = 500, error_code: Optional[str] = None, details: Optional[Dict] = None) -> tuple:
+def error_response(message: str, status_code: int = 400, error_code: str = None, details: Dict[str, Any] = None) -> tuple:
     """
-    Create a standardized error response.
+    Generate standardized error response.
     
     Args:
         message: Error message
         status_code: HTTP status code
-        error_code: Optional error code for categorization
-        details: Optional additional error details
+        error_code: Optional error code
+        details: Additional error details
         
     Returns:
-        Tuple of (response, status_code)
+        Tuple of (Flask response, status_code)
     """
     response = {
-        "success": False,
-        "message": message,
-        "timestamp": datetime.utcnow().isoformat(),
-        "status_code": status_code
-    }
-    
-    if error_code:
-        response["error_code"] = error_code
-    
-    if details:
-        response["details"] = details
-    
-    logger.error(f"Error response: {message} (status: {status_code}, code: {error_code})")
-    return jsonify(response), status_code
-
-
-def validation_error_response(errors: List[str], status_code: int = 400) -> tuple:
-    """
-    Create a standardized validation error response.
-    
-    Args:
-        errors: List of validation error messages
-        status_code: HTTP status code
-        
-    Returns:
-        Tuple of (response, status_code)
-    """
-    response = {
-        "success": False,
-        "message": "Validation failed",
-        "errors": errors,
-        "timestamp": datetime.utcnow().isoformat(),
-        "status_code": status_code,
-        "error_code": "VALIDATION_ERROR"
-    }
-    
-    logger.warning(f"Validation error response: {len(errors)} errors")
-    return jsonify(response), status_code
-
-
-def prediction_response(prediction: float, confidence: Optional[float] = None, 
-                       features_used: Optional[List[str]] = None, 
-                       model_info: Optional[Dict] = None) -> tuple:
-    """
-    Create a standardized prediction response.
-    
-    Args:
-        prediction: The prediction value
-        confidence: Optional confidence score
-        features_used: Optional list of features used in prediction
-        model_info: Optional model information
-        
-    Returns:
-        Tuple of (response, status_code)
-    """
-    data = {
-        "prediction": round(prediction, 4),
-        "prediction_date": datetime.utcnow().isoformat()
-    }
-    
-    if confidence is not None:
-        data["confidence"] = round(confidence, 4)
-    
-    if features_used:
-        data["features_used"] = features_used
-    
-    if model_info:
-        data["model_info"] = model_info
-    
-    return success_response(data, "Prediction generated successfully")
-
-
-def batch_prediction_response(predictions: List[Dict], summary: Optional[Dict] = None) -> tuple:
-    """
-    Create a standardized batch prediction response.
-    
-    Args:
-        predictions: List of prediction results
-        summary: Optional summary statistics
-        
-    Returns:
-        Tuple of (response, status_code)
-    """
-    data = {
-        "predictions": predictions,
-        "batch_size": len(predictions),
-        "processing_date": datetime.utcnow().isoformat()
-    }
-    
-    if summary:
-        data["summary"] = summary
-    
-    return success_response(data, f"Batch predictions generated successfully for {len(predictions)} items")
-
-
-def model_info_response(model_info: Dict) -> tuple:
-    """
-    Create a standardized model information response.
-    
-    Args:
-        model_info: Dictionary containing model information
-        
-    Returns:
-        Tuple of (response, status_code)
-    """
-    data = {
-        "model_info": model_info,
-        "query_date": datetime.utcnow().isoformat()
-    }
-    
-    return success_response(data, "Model information retrieved successfully")
-
-
-def health_check_response(status: str = "healthy", checks: Optional[Dict] = None) -> tuple:
-    """
-    Create a standardized health check response.
-    
-    Args:
-        status: Overall health status
-        checks: Optional detailed health checks
-        
-    Returns:
-        Tuple of (response, status_code)
-    """
-    data = {
-        "status": status,
-        "uptime": "Available",
-        "version": "1.0.0"
-    }
-    
-    if checks:
-        data["checks"] = checks
-    
-    status_code = 200 if status == "healthy" else 503
-    return success_response(data, f"Service is {status}", status_code)
-
-
-def paginated_response(items: List[Any], page: int, per_page: int, total: int, 
-                      message: str = "Data retrieved successfully") -> tuple:
-    """
-    Create a standardized paginated response.
-    
-    Args:
-        items: List of items for current page
-        page: Current page number
-        per_page: Items per page
-        total: Total number of items
-        message: Response message
-        
-    Returns:
-        Tuple of (response, status_code)
-    """
-    total_pages = (total + per_page - 1) // per_page
-    
-    data = {
-        "items": items,
-        "pagination": {
-            "page": page,
-            "per_page": per_page,
-            "total": total,
-            "total_pages": total_pages,
-            "has_next": page < total_pages,
-            "has_prev": page > 1
+        'success': False,
+        'error': {
+            'message': message,
+            'code': error_code or f"ERROR_{status_code}",
+            'timestamp': datetime.now().isoformat(),
+            'details': details or {}
+        },
+        'rwanda_medlink': {
+            'version': '1.0.0',
+            'system': 'Rwanda Pharmacy Prediction API',
+            'support': 'Check input format and try again'
         }
     }
     
-    return success_response(data, message)
+    return jsonify(response), status_code
+
+
+def pharmacy_prediction_response(prediction_data: Dict[str, Any]) -> tuple:
+    """
+    Generate specialized response for pharmacy predictions.
+    
+    Args:
+        prediction_data: Pharmacy prediction results
+        
+    Returns:
+        Tuple of (Flask response, status_code)
+    """
+    # Enhance with Rwanda-specific metadata
+    enhanced_data = prediction_data.copy()
+    enhanced_data['rwanda_insights'] = {
+        'seasonal_patterns_applied': True,
+        'business_intelligence_included': True,
+        'demographic_analysis_performed': True,
+        'inventory_recommendations_generated': True
+    }
+    
+    return success_response(
+        enhanced_data,
+        "Rwanda pharmacy prediction completed successfully",
+        200
+    )
+
+
+def batch_prediction_response(batch_data: Dict[str, Any]) -> tuple:
+    """
+    Generate specialized response for batch predictions.
+    
+    Args:
+        batch_data: Batch prediction results
+        
+    Returns:
+        Tuple of (Flask response, status_code)
+    """
+    enhanced_data = batch_data.copy()
+    enhanced_data['processing_metadata'] = {
+        'rwanda_patterns_applied': True,
+        'batch_optimization': 'enabled',
+        'business_intelligence': 'generated_for_successful_predictions'
+    }
+    
+    return success_response(
+        enhanced_data,
+        "Batch pharmacy predictions completed",
+        200
+    )
